@@ -1,0 +1,166 @@
+#include "stdafx.h"
+#include <string>
+#include <iostream>
+#define MAXHASH 1000
+
+using namespace std;
+
+enum RecordType { normalRecord, emptyRecord, tombstone };
+
+template <class T> struct Record {
+
+	int key;
+	T value;
+	RecordType type;
+
+	Record() { key = 0; type = emptyRecord; }
+	Record(int newkey, T newvalue) : key(newkey), value(newvalue) { type = normalRecord; }
+	~Record() {}
+
+	void kill() { type = tombstone; }
+	void remove() { type = emptyRecord; }
+
+	int getKey() const { return key; }
+	T getValue() const { return value; }
+
+	bool isEmpty() const { return(type == emptyRecord); }
+	bool isNormal() const { return(type == normalRecord); }
+	bool isTombstone() const { return (type == tombstone); }
+};
+
+template <class T> struct HashTable {
+
+	int totalRecords;
+	Record<T> **table;
+
+	HashTable() {
+		totalRecords = 0;
+		table = new Record<T>*[MAXHASH];
+		for (int i = 0; i < MAXHASH; i++) { table[i] = new Record<T>(); }
+	}
+
+	void print(ostream& os) {
+		for (int i = 0; i < MAXHASH; i++) {
+			if (table[i]->isEmpty()) { os << "Index: " << i << " is " << "empty." << endl; }
+			if (table[i]->isTombstone()) { os << "Index: " << i << " is " << "a tombstone." << endl; }
+			if (table[i]->isNormal()) { os << "Index: " << i << " Key: " << table[i]->getKey() << ", Value: " << table[i]->getValue() << endl; }
+		}
+	}
+
+	friend ostream& operator<<(ostream& os, HashTable& hashTable) {
+		hashTable.print(os);
+		return os;
+	}
+
+	bool insert(int key, T value, int& collisions) {
+		int insert_index = ELFhash(key);
+		if (table[insert_index]->isEmpty() || table[insert_index]->isTombstone()) {
+			table[insert_index] = new Record<T>(key, value);
+			totalRecords++;
+			cout << "Record inserted with " << collisions << " collisions" << endl;
+			return true;
+		}
+		else {
+			for (int i = 0; i < MAXHASH; i++) {
+				if (table[insert_index]->getKey() == key) {
+					cout << "Unable to insert record, duplicate found." << endl;
+					return false;
+				}
+				collisions++;
+				insert_index = (insert_index + i*i) % MAXHASH;
+				if (table[insert_index]->isEmpty() || table[insert_index]->isTombstone()) {
+					table[insert_index] = new Record<T>(key, value);
+					totalRecords++;
+					cout << "Record inserted with " << collisions << " collisions" << endl;
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	bool find(int key, T& value) {
+		int insert_index = ELFhash(key);
+		if (!table[insert_index]->isEmpty() && !table[insert_index]->isTombstone()) {
+			value = table[insert_index]->getValue();
+			cout << "Record with given key is found." << endl;
+			return true;
+		}
+		else {
+			for (int i = 0; i < MAXHASH; i++) {
+				insert_index = (insert_index + i*i) % MAXHASH;
+				if (!table[insert_index]->isEmpty() && !table[insert_index]->isTombstone()) {
+					value = table[insert_index]->getValue();
+					cout << "Record with given key is found." << endl;
+					return true;
+				}
+			}
+		}
+		cout << "Record doesn't exist\n";
+		return false;
+	}
+
+	bool remove(int key) {
+		int insert_index = ELFhash(key);
+		if (!table[insert_index]->isEmpty()) {
+			table[insert_index]->remove();
+			cout << "Record removed\n";
+			return true;
+		}
+		else {
+			for (int i = 0; i < MAXHASH; i++) {
+				insert_index = (insert_index + i*i) % MAXHASH;
+				if (!table[insert_index]->isEmpty()) {
+					table[insert_index]->remove();
+					cout << "Record removed\n";
+					return true;
+				}
+			}
+		}
+		cout << "Record not found\n";
+		return false;
+	}
+
+	int ELFhash(int key) {
+		string s = to_string(static_cast<long long>(key));
+		char const *pkey = s.c_str();
+		unsigned long h = 0;
+		while (*pkey) {
+			h = (h << 4) + *pkey++;
+			unsigned long g = h & 0xF0000000L;
+			if (g) h ^= g >> 24;
+			h &= ~g;
+		}
+		return (int)(h % MAXHASH);
+	}
+
+	float alpha() {
+		float k = ((float)totalRecords / (float)MAXHASH);
+		cout << "Alpha: " << k << endl;
+		return k;
+	}
+};
+
+int main() {
+	HashTable<int> hashTable;
+
+	int collisions = 0;
+	for (int i = 0; i < 100; i++) {
+		collisions = 0;
+		hashTable.insert(i, i, collisions);
+	}
+
+	cout << hashTable << endl;
+
+	hashTable.alpha();
+
+	//HashTable<char> hashTable1;
+	//for (int i = 0; i < 900; i++) {
+	//	collisions = 0;
+	//	hashTable1.insert((char)i, (char)i, collisions);
+	//}
+	//cout << hashTable1 << endl;
+	//hashTable1.alpha();
+
+	return 0;
+}
