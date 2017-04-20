@@ -1,0 +1,752 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <string.h>
+#define EOF (-1)
+typedef unsigned char BYTE;
+struct Reg {   char n[10];   int   v;    };
+struct Reg eax;
+struct Reg ecx;
+struct Reg edx;
+struct Reg ebx;
+struct Reg esi;
+struct Reg edi;
+struct Reg esp;
+struct Reg ebp;
+BYTE p[2000];
+int programLength;
+int num_words;
+int pc;
+int codes;
+bool littleEndian = true;
+void init();
+void parseFromASCII(BYTE *temp,int size);
+BYTE aToH(BYTE x);
+void decode();
+void printRegisters();
+void halt();
+void setHLT();
+void nop();
+void rrmovl(BYTE reg);
+struct Reg r1(BYTE a);
+struct Reg r2(BYTE a);
+int getZF();
+int getSF();
+int getOF();
+void cmovl(BYTE reg);
+void cmovle(BYTE reg);
+void cmove(BYTE reg);
+void cmovne(BYTE reg);
+void cmovge(BYTE reg);
+void cmovg(BYTE reg);
+void setINS();
+void clearStatus();
+void irmovl(int val, BYTE reg);
+void rmmovl(BYTE reg, int offset);
+void loadVal(int val, int addr);
+void mrmovl(BYTE reg, int offset);
+void addl(BYTE reg);
+void setFlags(int a, int b, int result);
+void clearFlags();
+void clearSF();
+void setSF();
+void clearZF();
+void setZF();
+void clearOF();
+void setOF();
+void subl(BYTE reg);
+void andl(BYTE reg);
+void xorl(BYTE reg);
+int getVal(BYTE a, BYTE b, BYTE c, BYTE d);
+void jg(int dest);
+void jge(int dest);
+void jne(int dest);
+void je(int dest);
+void jl(int dest);
+void jle(int dest);
+void jmp(int dest);
+void popl(BYTE reg);
+void pushl(BYTE reg);
+void ret();
+void doPush(int val);
+void call(int addr);
+void setr1(BYTE a,int val);
+void setr2(BYTE a,int val);
+
+/*Reads in string of characters from input file argument*/
+void main(int argc, char *argv[]){
+    char filename[20];
+    if(argc==2) { strcpy(filename,argv[1]);    }
+    else { printf("Please pass code filename as argument\n"); }
+    strcpy(eax.n ,"eax");
+    strcpy(ecx.n , "ecx");
+    strcpy(edx.n , "edx");
+    strcpy(ebx.n , "ebx");
+    strcpy(esi.n , "esi");
+    strcpy(edi.n , "edi");
+    strcpy(esp.n , "esp");
+    strcpy(ebp.n , "ebp");
+    init();
+    int c;
+    FILE *file;
+    file = fopen(filename, "r");
+    int count = 0;
+    BYTE temp[2000];
+    int i=0;
+    if (file) {
+        while ((c = getc(file)) != EOF){
+            temp[i] = c;
+            i++;
+            //putchar(c);
+        }
+        fclose(file);}
+    printf("%s\n",temp);
+    //printf("Size: %d\n",i);   
+    parseFromASCII(temp,--i);
+    decode();
+}
+
+/*Decodes input file, converts opcodes and calls provided subroutines*/
+void decode(){
+    for (pc = 0; pc < programLength;){
+        printRegisters();
+        printf("\n0x%x:\t", pc & 0xff);
+        switch (p[pc] & 0xf0){
+            case 0x00:{
+                if ((p[pc] & 0x0f) == 0x0){
+            printf("%x\t\t", p[pc]);
+                    halt();
+                }else{ printf("Error interpreting halt at pc=%x", pc); }
+                break;
+              } case 0x10: {
+                /* l=2, nop */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x\t\t", p[pc]);
+                    nop();
+                }else{printf("Error interpreting nop at pc=%x", pc);}
+                break;}
+            case 0x20:{ printf("%x %x \t\t", p[pc] & 0xff, p[pc + 1] & 0xff);
+                BYTE reg = p[pc + 1];
+                /* l=4, mov
+                rrmovl rA, rb     20 rArB
+                cmovle rA, rb     21 rArB
+                cmovl rA, rb      22 rArB
+                cmove rA, rB      23 rArB
+                cmovne rA, rB     24 rArB
+                cmovge rA, rB     25 rArB
+                cmovg rA, rB      26 rArB*/
+                switch (p[pc] & 0x0f){
+                        case 0x0:    rrmovl(reg);    break;
+                        case 0x1:    cmovle(reg);    break;
+                        case 0x2:    cmovl(reg);    break;
+                        case 0x3:    cmove(reg);    break;
+                        case 0x4:    cmovne(reg);    break;
+                        case 0x5:    cmovge(reg);    break;
+                        case 0x6:    cmovg(reg);    break;
+                        default:    setINS();    printf("Error interpreting mov at pc=%x", pc);    break;
+                }break;}
+            case 0x30:{
+                // l=8, irmovl */
+                // irmovl V, rb      30 FrB V[4] */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x %x %x %x %x %x\t",
+                        p[pc] & 0xff, p[pc + 1] & 0xff,    p[pc + 2] & 0xff,
+                        p[pc + 3] & 0xff, p[pc + 4] & 0xff, p[pc + 5] & 0xff);
+                    int val = getVal(p[pc + 2], p[pc + 3], p[pc + 4], p[pc + 5]);
+                    BYTE reg = p[pc+1];
+                    irmovl(val, reg);
+                } else{
+                    setINS();
+                    error("Error interpreting irmovl at pc=%x", pc);
+                }break;
+            }case 0x40:{  
+                // l=8, rmmovl
+                // rmmovl rA, D(rB)  40 rArB D[4] */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x %x %x %x %x %x\t", p[pc] & 0xff, p[pc + 1] & 0xff,
+                        p[pc + 2] & 0xff, p[pc + 3] & 0xff, p[pc + 4] & 0xff, p[pc + 5] & 0xff);
+                    int data = getVal(p[pc + 2], p[pc + 3], p[pc + 4], p[pc + 5]);
+                    rmmovl(p[pc + 1], data);
+                } else{
+                    setINS();
+                    error("Error interpreting rrmovl at pc=%x", pc);
+                }break;
+            }case 0x50:{
+                /* l=8, mrmovl */
+                /*     mrmovl D(rB), rA     50 rArB D[4] */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x %x %x %x %x %x\t", p[pc] & 0xff, p[pc + 1] & 0xff,
+                        p[pc + 2] & 0xff, p[pc + 3] & 0xff, p[pc + 4] & 0xff, p[pc + 5] & 0xff);
+                    int data = getVal(p[pc + 2], p[pc + 3], p[pc + 4], p[pc + 5]);
+                    mrmovl(p[pc + 1], data);
+                } else{
+                    setINS();
+                    error("Error interpreting mrmovl at pc=%x", pc);
+                }break;}
+            case 0x60:{
+                printf("%x %x \t\t", p[pc] & 0xff, p[pc + 1] & 0xff);
+                BYTE reg = p[pc + 1];
+                /* l=4, op */
+                    /*addl rA, rB       60 rArB
+                    subl rA, rB       61 rArB
+                    andl rA, rB       62 rArB
+                    xorl rA, rB       63 rArB*/
+            switch (p[pc] & 0x0f){
+                case 0x0:    addl(reg);    break;
+                case 0x1:    subl(reg);    break;
+                case 0x2:    andl(reg);    break;
+                case 0x3:    xorl(reg);    break;
+                default:    setINS();    error("Problem parsing op at pc=%x", pc);    break;
+                }break;}
+            case 0x70:{
+                /* l=8, jmps */
+                printf("%x %x %x %x %x\t", p[pc] & 0xff, p[pc + 1] & 0xff,
+                        p[pc + 2] & 0xff, p[pc + 3] & 0xff, p[pc + 4] & 0xff);
+                int dest = getVal(p[pc + 1], p[pc + 2], p[pc + 3], p[pc + 4]);
+                /*jmp Dest          70 Dest[4]
+                jle Dest          71 Dest[4]
+                jl Dest           72 Dest[4]
+                je Dest           73 Dest[4]
+                jne Dest          74 Dest[4]
+                jge Dest          75 Dest[4]
+                jg Dest           76 Dest[4]*/
+            switch (p[pc] & 0x0f){
+                case 0x0:    jmp(dest);    break;
+                case 0x1:    jle(dest);    break;
+                case 0x2:    jl(dest);    break;
+                case 0x3:    je(dest);    break;
+                case 0x4:    jne(dest);    break;
+                case 0x5:    jge(dest);    break;
+                case 0x6:    jg(dest);    break;
+                default:    setINS();    error("Error interpreting jump at pc=%x", pc);    break;
+                }break;}
+            case 0x80:{
+                /* l=8, call */
+                /*     call  80 Dest[4] */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x %x %x %x %x\t", p[pc] & 0xff, p[pc + 1] & 0xff,
+                            p[pc + 2] & 0xff, p[pc + 3] & 0xff, p[pc + 4] & 0xff);
+                    int dest = getVal(p[pc + 1], p[pc + 2], p[pc + 3], p[pc + 4]);
+                    call(dest);
+                } else{
+                    setINS();
+                    error("Error interpreting call at pc=%x", pc);
+                }break;}
+            case 0x90:{
+                /* l=2, ret */
+                /*     ret   90 */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x  \t\t", p[pc] & 0xff);
+                    ret();
+                } else{
+                    setINS();
+                    error("Error interpreting ret at pc=%x", pc);
+                }break;}
+            case 0xa0:{
+                /* l=4, pushl */
+                /* pushl rA          A0 rAF */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x %x \t\t", p[pc] & 0xff, p[pc + 1] & 0xff);
+                    pushl((BYTE) (p[pc + 1] & 0xf0));
+                } else{
+                    setINS();
+                    error("Error interpreting pushl at pc=%x", pc);
+                }break;}
+            case 0xb0:{
+                /* l=4, popl */
+                 /* popl rA           B0 rAF */
+                if ((p[pc] & 0x0f) == 0x0){
+                    printf("%x %x \t\t", p[pc] & 0xff, p[pc + 1] & 0xff);
+                    popl((BYTE) (p[pc + 1] & 0xf0));
+                } else{
+                    setINS();
+                    error("Error interpreting pushl at pc=%x", pc);
+                }break;}
+            default:{
+                setINS();
+                error("Error interpreting instruction at pc=%x", pc);
+            }
+        }
+    }printf("\nFinal state:");
+    printRegisters();
+    printf("\n");
+}
+
+void popl(BYTE reg){
+    struct Reg rA = r1(reg);
+    rA.v = p[esp.v];
+    setr1(reg,p[esp.v]);
+    /* pull top stack value into rA */
+    esp.v = esp.v + 0x4;
+    /* remove entry from the stack */
+    printf("popl %s %x", rA.n, rA.v);
+    pc += 2;
+}
+
+void pushl(BYTE reg){
+    struct Reg rA = r1(reg);
+    printf("pushl %x", rA.v);
+    pc += 2;
+    doPush(rA.v);
+}
+
+void ret(){
+    printf("ret");
+    pc = p[esp.v];
+    esp.v = esp.v + 0x4;   // restore pc from stack /
+    pc += 5;
+    /* for how many bytes it took to call */
+}
+
+void doPush(int val){
+    esp.v = esp.v - 4; // make entry on the stack
+    loadVal(val, esp.v);
+}
+
+void call(int addr){
+    printf("call %x", addr);
+    // make entry on stack /
+    /* push old pc onto stack */
+    doPush(pc);
+    pc = addr;
+}
+
+void jmp(int dest){
+    printf("jmp %x", dest);
+    pc = dest;
+    printf(" (pc=%x)", dest);
+    pc += 5;
+}
+
+void jle(int dest){
+    printf("jle %x", dest);
+    if (getZF() == 1 || getSF() != getOF()){
+        pc = dest;
+        printf(" (pc=%x)", dest);
+    } else    {
+        printf(" (not taken)");
+        pc += 5;
+    }
+}
+
+void jl(int dest){
+    printf("jl %x", dest);
+    if (getZF() != getOF()){
+        pc = dest;
+        printf(" (pc=%x)", dest);
+    } else {
+        printf(" (not taken)");
+        pc += 5;
+    }
+}
+
+void je(int dest){
+    printf("je %x", dest);
+    if (getZF() == 1){
+        pc = dest;
+        printf(" (taken)");
+    } else    {
+        printf(" (not taken)");
+        pc += 5;
+    }
+}
+
+void jne(int dest){
+    printf("jne %x", dest);
+    if (getZF() == 0){
+        pc = dest;
+        printf(" (pc=%x)", pc & 0xff);
+    } else    {
+        printf(" (not taken)");
+        pc += 5;
+    }
+}
+
+void jge(int dest){
+    printf("jge %x", dest);
+    if (getZF() == getSF())    {
+        pc = dest;
+        printf(" (pc=%x)", dest);
+    } else    {
+        printf(" (not taken)");
+        pc += 5;
+    }
+}
+
+void jg(int dest){
+    printf("jg %x", dest);
+    if (getZF() == 0 && getSF() == 0){
+        pc = dest;
+        printf(" (pc=%x)", dest);
+    } else    {
+        printf(" (not taken)");
+        pc += 5;
+    }
+}
+
+void xorl(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    struct Reg tmp = dst;
+    setr2(reg,dst.v ^ src.v);
+    dst.v = dst.v ^ src.v;
+    printf("xorl %s, %s: (%x)", dst.n, src.n, dst.v);
+    setFlags(tmp.v, src.v, dst.v);
+    pc += 2;
+}
+
+void andl(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    struct Reg tmp = dst;
+    setr2(reg,dst.v & src.v);
+    dst.v = dst.v & src.v;
+    printf("andl %s, %s: (%x)", dst.n, src.n, dst.v);
+    setFlags(tmp.v, src.v, dst.v);
+    pc += 2;
+}
+
+void subl(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    struct Reg tmp = dst;
+    setr2(reg,dst.v - src.v);
+    dst.v = dst.v - src.v;
+    printf("subl %s, %s: (%x)", dst.n, src.n, dst.v);
+    setFlags(tmp.v, src.v, dst.v);
+    pc += 2;
+}
+
+void setZF(){
+    codes = codes | 64;
+    /* sets the 01000000 flag */
+    printf("   ZF set");
+}
+
+void clearZF(){
+    codes = codes & 64;
+    /* clears 10111111 flag */
+    // if set, clear
+    // if clear, clear
+}
+
+void setOF(){
+    codes = codes | 16;
+    /* sets the 00010000 flag */
+    printf("   OF set");
+}
+
+void clearOF(){    codes = codes & 16; }
+
+void setSF(){
+    codes = codes | 32;
+    /* sets the 00100000 flag */
+    printf("   SF set");
+}
+
+void clearSF(){    codes = codes & 32; }
+
+void clearFlags(){    clearSF();    clearZF();    clearOF();    }
+
+void setFlags(int a, int b, int result){
+    clearFlags();
+    if (result == 0)    setZF();
+    if (result < 0)        setSF();
+    if (((a & 128) == 128 &&  (b & 128) == 128 &  (result & 128) == 0) ||
+        ((a & 128) == 0   &&  (b & 128) == 0   &  (result & 128) == 128))
+        setOF();
+}
+
+void addl(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    struct Reg tmp = dst;
+    setr2(reg,dst.v + src.v);
+    dst.v = dst.v + src.v;
+    printf("addl %s, %s: (%x)", dst.n, src.n, dst.v);
+    setFlags(tmp.v, src.v, dst.v);
+    pc += 2;
+}
+
+void mrmovl(BYTE reg, int offset){
+    struct Reg rA = r1(reg);
+    struct Reg rB = r2(reg);
+    setr1(reg,p[rB.v + offset]);
+    rA.v = p[rB.v + offset];
+    printf("mrmovl %x(%s), %s: (%x)", offset & 0xffff, rB.n, rA.n, rA.v);
+    pc += 6;
+}
+
+void loadVal(int val, int addr){
+    p[addr] = (BYTE) (val & 0xf000);
+    p[addr + 1] = (BYTE) (val & 0x0f00);
+    p[addr + 2] = (BYTE) (val & 0x00f0);
+    p[addr + 3] = (BYTE) (val & 0x000f);
+}
+
+void rmmovl(BYTE reg, int offset){
+    struct Reg rA = r1(reg);
+    struct Reg rB = r2(reg);
+    loadVal(rA.v, rB.v + offset);
+    printf("rmmovl %s, %x(%x)", rA.n, offset & 0xffff, rB.v & 0xffff);
+    pc += 6;
+}
+
+void irmovl(int val, BYTE reg){
+    //BYTE temp = reg;
+    struct Reg rB = r2(reg);
+    rB.v = val;
+    setr2(reg,val);
+    printf("irmovl %s, %x", rB.n, rB.v & 0xffff);
+    pc += 6;
+}
+
+int getVal(BYTE a, BYTE b, BYTE c, BYTE d){
+    int val;
+    if (littleEndian){
+//        printf("      getVal: %x %x %x %x \n ",a,b,c,d);
+        val = a;
+        val = val | b << 8;
+        val = val | c << 12;
+        val = val | d << 16;
+//        printf(": %x ", val);
+    } else
+        /* big endian */{
+        val = a;
+        val = val | b << 4;
+        val = val | c << 8;
+        val = val | d << 12;
+    }
+    return val;
+}
+
+void clearStatus(){
+    codes = codes & (255 - 15);
+    /*11110000 - clears last four bits */
+}
+
+void setINS(){
+    clearStatus();
+    codes = codes | 4;
+    /* sets 00000010 */
+    printf("   set status = INS");
+}
+
+void cmovg(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    if (getSF() == 0 && getZF() == 0){
+        dst = src;
+        setr2(reg,src.v);
+        printf("cmovg %s, %s (%x moved)", src.n, dst.n, dst.v);
+    } else
+        printf("cmovg %s, %s (%x not moved)", src.n, dst.n, src.v);
+    pc += 2;
+}
+
+void cmovge(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    if (getSF() == getZF())    {
+        dst = src;
+        setr2(reg,src.v);
+        printf("cmovge %s, %s, (%x moved)", src.n, dst.n, dst.v);
+    } else
+        printf("cmovge %s, %s (%x not moved)", src.n, dst.n, src.v);
+    pc += 2;
+}
+
+void cmovne(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    if (getZF() == 0){
+        dst = src;
+        setr2(reg,src.v);
+        printf("cmovne %s, %s (%x moved)", src.n, dst.n, dst.v);
+    } else
+        printf("cmovne %s, %s (%x not moved)", src.n, dst.n, src.v);
+    pc += 2;
+}
+
+void cmove(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    if (getZF() == 1){
+        dst = src;
+        setr2(reg,src.v);
+        printf("cmove %s, %s (%x moved)", src.n, dst.n, dst.v);
+    } else
+        printf("cmove %s, %s (%x not moved)", src.n, dst.n, src.v);
+    pc += 2;
+    }
+
+void cmovl(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    if (getSF() != getOF())    {
+        dst = src;
+        setr2(reg,src.v);
+        printf("cmovl %s, %s (%x moved)", src.n, dst.n, dst.v);
+    } else
+        printf("cmovl %s, %s (%x not moved)", src.n, dst.n, src.v);
+    pc += 2;
+}
+   
+void cmovle(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    if (getZF() == 1 || getSF() != getOF())    {
+        dst = src;
+        setr2(reg,src.v);
+        printf("cmovle %s, %s (%x moved)", src.n, dst.n, dst.v);
+    } else
+        printf("cmovle %s, %s (%x not moved)", src.n, dst.n, src.v);
+    pc += 2;
+}
+
+int getZF(){
+    if ((codes & 64) == 64)        return 1;
+    return 0;
+}
+
+int getSF(){
+    if ((codes & 32) == 32)        return 1;
+    return 0;
+}
+
+int getOF(){
+    if ((codes & 16) == 16)        return 1;
+    return 0;
+}
+
+void rrmovl(BYTE reg){
+    struct Reg src = r1(reg);
+    struct Reg dst = r2(reg);
+    dst = src;
+    setr2(reg,src.v);
+    printf("rrmovl %s, %s:  (%x)", src.n, dst.n, dst.v);
+    pc += 2;
+}
+
+struct Reg r1(BYTE a){
+    //    printf("r2: %x, r2 & 0x0f: %x", a, (a & 0xf0));
+    switch (a & 0xf0){
+        case 0x00:    return eax;
+	case 0x10:    return ecx;
+	case 0x20:    return edx;
+	case 0x30:    return ebx;
+	case 0x40:    return esp;
+	case 0x50:    return ebp;
+	case 0x60:    return esi;
+	case 0x70:    return edi;
+    default:    printf("Error determining register1 value. pc=%x", pc);
+    }return eax;
+    /* shouldn't be hit */
+}
+
+void setr1(BYTE a,int val){
+    switch (a & 0xf0){
+        case 0x00:    eax.v = val;    break;
+	case 0x10:    ecx.v = val;    break;
+        case 0x20:    edx.v = val;    break;
+        case 0x30:    ebx.v = val;    break;
+        case 0x40:    esp.v = val;    break;
+	case 0x50:    ebp.v = val;    break;
+	case 0x60:    esi.v = val;    break;
+	case 0x70:    edi.v = val;    break;
+    default:    printf("Error determining set register1 value. pc=%x", pc);    break;
+    }eax.v = val;
+}
+
+void setr2(BYTE a,int val){
+    //printf("!!!%x!!!", (a & 0x0f));
+    switch (a & 0x0f){
+        case 0x00:    eax.v = val;    break;
+        case 0x01:    ecx.v = val;    break;
+        case 0x02:    edx.v = val;    break;
+        case 0x03:    ebx.v = val;    break;
+        case 0x04:    esp.v = val;    break;
+        case 0x05:    ebp.v = val;    break;
+        case 0x06:    esi.v = val;    break;
+        case 0x07:    edi.v = val;    break;
+        default:    printf("Error determining set register 2 value. pc=%x", pc);    break;
+    }eax.v = val;
+}
+
+struct Reg r2(BYTE a){
+    //printf("!*!%x!*!", (a & 0x0f));
+    //    printf("r2: %x, r2 & 0x0f %x", a, (a & 0x0f));
+    switch (a & 0x0f){
+        case 0x00:    return eax;
+        case 0x01:    return ecx;
+        case 0x02:    return edx;
+        case 0x03:    return ebx;
+        case 0x04:    return esp;
+        case 0x05:    return ebp;
+        case 0x06:    return esi;
+        case 0x07:    return edi;
+        default:    printf("Error determining register2 value. pc=%x", pc);
+    }
+    printf("Not found");
+    return eax;
+    /* shouldn't be hit */
+}
+
+void nop(){
+    printf("nop");
+    pc += 1;
+}
+
+void halt(){
+    printf("halt");
+    setHLT();
+    pc += 1;
+    printRegisters();
+    //System.exit(0);
+}
+
+void setHLT(){
+    //clearStatus();
+    codes = codes | 2;
+    /* sets 00000010 */
+    printf("   set status = HLT");
+}
+   
+void printRegisters(){
+    printf("\teax: %x, ", eax.v);
+    printf("ecx: %x, ", ecx.v);
+    printf("edx: %x, ", edx.v);
+    printf("ebx: %x, ", ebx.v);
+    printf("esi: %x, ", esi.v);
+    printf("edi: %x, ", edi.v);
+    printf("esp: %x, ", esp.v);
+    printf("ebp: %x, ", ebp.v);
+    printf("PC: %x", pc);
+}
+
+void parseFromASCII(BYTE *temp,int size){
+    int j = 0, i = 0;
+    programLength = 0;
+    if (size == 0){ printf("There are no bytes in the input file\n"); }
+    else{
+        for (i = 0; i < size; i++){
+        BYTE a = aToH(temp[i]);
+        BYTE b = aToH(temp[i + 1]);
+        p[j] = (BYTE) (a << 4 | b);
+        printf("%x ", p[j] & 0xff);
+        i++;    j++;
+        }programLength = j;}
+}
+
+BYTE aToH(BYTE x){
+    if (x > '/' && x < ':')
+        /* 0-9 */
+        x = (BYTE) (x - 48);
+    else
+        if (x > '`' && x < 'g')
+            /* a-f */
+            x = (BYTE) (x - 87);
+    return x;
+}
+   
+void init(){ eax.v = ecx.v = edx.v = ebx.v = esi.v = edi.v = esp.v = ebp.v = pc = 0; }
