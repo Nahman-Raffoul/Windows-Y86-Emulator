@@ -1,0 +1,133 @@
+/** Nahman Raffoul
+* CEG 4350 Summer 2016
+* Project 1: Producer / Consumer Problem*/
+
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <time.h>
+
+//Setting default values in case command line parameters are not provided, and additional counter
+int NUM_PRODUCERS = 2, NUM_CONSUMERS = 2, BUFFER_SIZE = 10, MAX_ITEMS = 20, totalItemsProcessed = 0;
+
+pthread_mutex_t lock;
+sem_t full, empty;
+
+//pointer to buffer, counter/index for semaphores
+int *buffer, emptyCounter = 0, fullCounter = 0;
+
+/** Producer function is called from main when threads are created.
+* The function proceeds by pulling the thread number, passed from main
+* and produces items (until max_items is reached), waits for the empty signal,
+* engages the lock and enters the critical section to place the item on the
+* buffer before releasing the lock finally.
+* @param void* arg The thread number is passed from main and cast to an int
+* @return void* */
+void *Producer(void *arg){
+	//Thread number passed by pthread_create from main
+	int thread_number = (int)arg;
+	//Iterate until totalItemsProcessed is equal to MAX_ITEMS*2
+	//(multiplied by 2 to account both producer and consumer functions)
+	while (totalItemsProcessed<=(MAX_ITEMS*2)){
+	srand(time(NULL));
+	int produced_item = rand()%100; 
+        sem_wait(&empty);
+        pthread_mutex_lock(&lock);
+		//If totalItemsProcessed reached max_items when this thread was waiting, then release the lock and exit
+		if(totalItemsProcessed>=(MAX_ITEMS*2)){
+			pthread_mutex_unlock(&lock);
+		        sem_post(&full);
+				//If producer and consumers are different amounts, this balances them out
+				if(NUM_CONSUMERS >NUM_PRODUCERS){
+					int i=0;
+					for(i=0;i<(NUM_CONSUMERS-NUM_PRODUCERS);i++){sem_post(&full);}			
+				}
+			break;
+		}
+			/**************CRITICAL SECTION START************/
+			totalItemsProcessed++;
+		        buffer[emptyCounter] = produced_item;
+			printf("Producer %d produced item %d on buffer %d\n",thread_number,totalItemsProcessed,emptyCounter);
+		        fflush(stdout);
+		        emptyCounter = (emptyCounter+1)%BUFFER_SIZE;
+			/**************CRITICAL SECTION ENDS************/
+        pthread_mutex_unlock(&lock);
+        sem_post(&full);
+        sleep(1);
+    }
+}
+
+/** Consumer function is called from main when threads are created.
+* The function proceeds by pulling the thread number, passed from main
+* and iterates until max_items is reached, by waiting for the full signal,
+* engaging the lock and then entering the critical section to consume the item on the
+* buffer before adjusint some counters and releasing the lock finally.
+* @param void* arg The thread number is passed from main and cast to an int
+* @return void* */
+void *Consumer(void *arg){
+	//Getting thread number passed as argument by pthread_create
+	int thread_number = (int)arg;
+    	//Iterate until totalItemsProcessed is equal to MAX_ITEMS*2
+	//(multiplied by 2 to account both producer and consumer functions)
+	while (totalItemsProcessed<=(MAX_ITEMS*2)){
+        sem_wait(&full);
+        pthread_mutex_lock(&lock);
+		//If totalItemsProcessed reached max_items when this thread was waiting, then release the lock and exit
+		if(totalItemsProcessed>=(MAX_ITEMS*2)){
+			pthread_mutex_unlock(&lock);
+		    	sem_post(&empty);
+				//If producer and consumers are different amounts, this balances them out
+				if(NUM_PRODUCERS>NUM_CONSUMERS){
+					int i=0;
+					for(i=0;i<(NUM_PRODUCERS-NUM_CONSUMERS);i++){sem_post(&empty);}			
+				}
+			break;
+		}
+			/**************CRITICAL SECTION START************/
+		        int consumed_item = buffer[fullCounter];
+			printf("Consumer %d consumed item %d on buffer %d\n",thread_number,consumed_item,fullCounter);
+		        fflush(stdout);
+		        fullCounter = (fullCounter+1)%BUFFER_SIZE;
+			totalItemsProcessed++;
+			/**************CRITICAL SECTION ENDS************/
+        pthread_mutex_unlock(&lock);
+        sem_post(&empty);
+        sleep(1);
+    }
+}
+
+/** Main reads in the parameters from the command line, if they are not provided,
+* then default values are used, the buffer/semaphores/mutex are initialized and the threads are created
+* @param int argc The number of parameters read in
+* @param char *argv[] The actual values which are read in
+* @return int*/
+int main(int argc, char *argv[]){
+	if(argc==5){
+		BUFFER_SIZE = atoi(argv[1]);
+		NUM_PRODUCERS = atoi(argv[2]);
+		NUM_CONSUMERS = atoi(argv[3]);
+		MAX_ITEMS = atoi(argv[4]);
+	}else{printf("Using defalt values\n");}
+		pthread_t producer_thread, consumer_thread;
+		
+		/**************INTIALIZATION SECTION START************/
+		buffer =  (int*)malloc(sizeof(int)*BUFFER_SIZE);
+		sem_init(&full, 0, 0);
+		sem_init(&empty, 0, BUFFER_SIZE);
+		pthread_mutex_init(&lock, NULL);
+		/**************INTIALIZATION SECTION END************/
+ 	
+	//create the producer threads
+ 	int i=0;
+	for (i = 0; i < NUM_PRODUCERS; i++){pthread_create(&producer_thread, NULL, Producer, (void*)i);
+	sleep(1);
+        }
+	//create the consumer threads
+	int j=0;
+	for(j=0; j < NUM_CONSUMERS; j++){pthread_create(&consumer_thread, NULL, Consumer, (void*)j);
+        sleep(1);
+	}
+    pthread_exit(NULL);
+}
