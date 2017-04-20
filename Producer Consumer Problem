@@ -1,7 +1,3 @@
-/** Nahman Raffoul
-* CEG 4350 Summer 2016
-* Project 1: Producer / Consumer Problem*/
-
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
